@@ -1,54 +1,73 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 
 // ─── Environment ─────────────────────────────────────────────────────────────
 
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const USER_ID = process.env.AIVAULT_USER_ID;
+const AIVAULT_URL = process.env.AIVAULT_URL?.replace(/\/+$/, "");
+const AIVAULT_API_KEY = process.env.AIVAULT_API_KEY;
 
-if (!SUPABASE_URL) {
-  console.error("Error: SUPABASE_URL (or NEXT_PUBLIC_SUPABASE_URL) env var is required");
+if (!AIVAULT_URL) {
+  console.error("Error: AIVAULT_URL env var is required (e.g. https://aivault.example.com)");
   process.exit(1);
 }
-if (!SUPABASE_KEY) {
-  console.error("Error: SUPABASE_SERVICE_ROLE_KEY env var is required");
+if (!AIVAULT_API_KEY) {
+  console.error("Error: AIVAULT_API_KEY env var is required (generate in AIVault Settings > API Keys)");
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+// ─── HTTP Client ─────────────────────────────────────────────────────────────
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+const headers = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${AIVAULT_API_KEY}`,
+};
 
-function escapeIlike(s: string): string {
-  return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+async function apiGet<T>(path: string): Promise<T> {
+  const res = await fetch(`${AIVAULT_URL}${path}`, { headers });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`AIVault API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${AIVAULT_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`AIVault API ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${AIVAULT_URL}${path}`, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`AIVault API ${res.status}: ${text}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 function errorMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-async function getUserId(): Promise<string> {
-  if (USER_ID) return USER_ID;
-  const { data, error } = await supabase
-    .from("users")
-    .select("id")
-    .limit(1)
-    .single();
-  if (error || !data) {
-    throw new Error("No user found. Set AIVAULT_USER_ID env var.");
-  }
-  return data.id;
-}
-
 // ─── Server ──────────────────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: "aivault",
-  version: "1.0.0",
+  version: "2.0.0",
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -57,154 +76,84 @@ const server = new McpServer({
 
 server.tool(
   "search_conversations",
-  "Search conversations by keyword in title or message content",
+  "Search conversations by keyword or semantic similarity",
   {
-    query: z.string().describe("Search keyword"),
-    platform: z.string().optional().describe("Filter by platform"),
+    query: z.string().describe("Search keyword or natural language query"),
+    mode: z.enum(["keyword", "semantic"]).optional().default("keyword")
+      .describe("Search mode: keyword (default) or semantic"),
+    platform: z.string().optional().describe("Filter by platform (CHATGPT, CLAUDE, etc.)"),
     limit: z.number().optional().default(10),
   },
-  async ({ query, platform, limit }) => {
+  async ({ query, mode, platform, limit }) => {
     try {
-      const uid = await getUserId();
-      const escaped = escapeIlike(query);
-
-      let titleQuery = supabase
-        .from("conversations")
-        .select("id, title, platform, message_count, created_at, summary")
-        .eq("user_id", uid)
-        .ilike("title", `%${escaped}%`)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-
-      if (platform) titleQuery = titleQuery.eq("platform", platform);
-      const { data: titleMatches } = await titleQuery;
-
-      const { data: msgMatches } = await supabase
-        .from("messages")
-        .select("conversation_id, conversations!inner(id, title, platform, message_count, created_at, summary, user_id)")
-        .ilike("content", `%${escaped}%`)
-        .eq("conversations.user_id", uid)
-        .limit(limit * 3);
-
-      const convMap = new Map<string, Record<string, unknown>>();
-      for (const c of titleMatches || []) convMap.set(c.id, c);
-      for (const m of msgMatches || []) {
-        const c = (m as Record<string, unknown>).conversations as Record<string, unknown> | null;
-        if (c && !convMap.has(c.id as string)) convMap.set(c.id as string, c);
-      }
-
+      const params = new URLSearchParams({ q: query, mode, limit: String(limit) });
+      if (platform) params.set("platform", platform);
+      const data = await apiGet<unknown>(`/api/search?${params}`);
       return {
-        content: [{ type: "text" as const, text: JSON.stringify([...convMap.values()].slice(0, limit), null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
 );
 
 server.tool(
   "get_conversation",
-  "Get full conversation with all messages",
+  "Get full conversation with all messages by ID",
   {
-    conversationId: z.string(),
+    conversationId: z.string().describe("Conversation UUID"),
   },
   async ({ conversationId }) => {
     try {
-      const { data: conv, error } = await supabase
-        .from("conversations")
-        .select("*")
-        .eq("id", conversationId)
-        .single();
-      if (error) throw error;
-
-      const { data: messages } = await supabase
-        .from("messages")
-        .select("id, role, content, created_at")
-        .eq("conversation_id", conversationId)
-        .order("created_at", { ascending: true });
-
+      const data = await apiGet<unknown>(`/api/conversations/${conversationId}`);
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ ...conv, messages: messages || [] }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
 );
 
 server.tool(
   "list_conversations",
-  "List recent conversations",
+  "List recent conversations with optional filters",
   {
-    platform: z.string().optional(),
+    page: z.number().optional().default(1),
     limit: z.number().optional().default(20),
+    platform: z.string().optional().describe("Filter by platform"),
+    query: z.string().optional().describe("Filter by title keyword"),
   },
-  async ({ platform, limit }) => {
+  async ({ page, limit, platform, query }) => {
     try {
-      const uid = await getUserId();
-      let q = supabase
-        .from("conversations")
-        .select("id, title, platform, message_count, created_at, summary")
-        .eq("user_id", uid)
-        .order("created_at", { ascending: false })
-        .limit(limit);
-      if (platform) q = q.eq("platform", platform);
-      const { data, error } = await q;
-      if (error) throw error;
-      return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
-    } catch (e) {
-      return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
-    }
-  }
-);
-
-server.tool(
-  "get_stats",
-  "Get AIVault statistics",
-  {},
-  async () => {
-    try {
-      const uid = await getUserId();
-      const { count: convCount } = await supabase
-        .from("conversations")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", uid);
-
-      const { data: userConvs } = await supabase
-        .from("conversations")
-        .select("id")
-        .eq("user_id", uid);
-      const convIds = (userConvs || []).map((c) => c.id);
-
-      let msgCount = 0;
-      if (convIds.length > 0) {
-        const { count } = await supabase
-          .from("messages")
-          .select("*", { count: "exact", head: true })
-          .in("conversation_id", convIds);
-        msgCount = count || 0;
-      }
-
-      const { data: platforms } = await supabase
-        .from("conversations")
-        .select("platform")
-        .eq("user_id", uid);
-      const uniquePlatforms = [...new Set((platforms || []).map((p) => p.platform))];
-
+      const params = new URLSearchParams({ page: String(page), limit: String(limit) });
+      if (platform) params.set("platform", platform);
+      if (query) params.set("q", query);
+      const data = await apiGet<unknown>(`/api/conversations?${params}`);
       return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({
-            total_conversations: convCount || 0,
-            total_messages: msgCount,
-            platforms: uniquePlatforms,
-          }, null, 2),
-        }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
+);
+
+server.tool(
+  "get_stats",
+  "Get AIVault statistics: total conversations, messages, platforms, and plan",
+  {},
+  async () => {
+    try {
+      const data = await apiGet<unknown>("/api/stats");
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+      };
+    } catch (e) {
+      return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
+    }
+  },
 );
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -213,137 +162,61 @@ server.tool(
 
 server.tool(
   "register_agent",
-  "Register this agent with AIVault. Call once when first connecting.",
+  "Register this agent as a collector in AIVault. Returns an agentId for heartbeats.",
   {
-    platform: z.enum(["CHATGPT", "CLAUDE", "GEMINI", "CODEX", "CURSOR", "OPENCODE", "HERMES", "OTHER"]),
-    agentName: z.string().describe("Human-readable agent name, e.g. 'Claude Code', 'Codex CLI'"),
-    version: z.string().optional().describe("Agent/tool version"),
-    device: z.string().optional().describe("Device or machine identifier"),
+    name: z.string().describe("Agent display name (e.g. 'MacBook Claude Code')"),
+    platform: z.string().describe("Platform identifier (CLAUDE, CODEX, CURSOR, etc.)"),
+    metadata: z.record(z.unknown()).optional().describe("Optional metadata (hostname, version, etc.)"),
   },
-  async ({ platform, agentName, version, device }) => {
+  async ({ name, platform, metadata }) => {
     try {
-      const uid = await getUserId();
-      const agentId = `${platform.toLowerCase()}-${device || "default"}`;
-
-      const { data, error } = await supabase
-        .from("collector_agents")
-        .upsert({
-          user_id: uid,
-          agent_id: agentId,
-          platform,
-          agent_name: agentName,
-          version: version || null,
-          device: device || null,
-          last_seen: new Date().toISOString(),
-          status: "online",
-        }, { onConflict: "agent_id" })
-        .select()
-        .single();
-
-      if (error) {
-        // Table might not exist yet
-        if (error.message.includes("does not exist")) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: "Error: collector_agents table not found. Run the migration SQL first. See README for instructions.",
-            }],
-            isError: true,
-          };
-        }
-        throw error;
-      }
-
+      const data = await apiPost<unknown>("/api/collector/agents", {
+        action: "register",
+        name,
+        platform,
+        metadata,
+      });
       return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({ registered: true, agentId, ...data }, null, 2),
-        }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
 );
 
 server.tool(
   "sync_conversation",
-  "Sync a conversation to AIVault. Send the full conversation messages.",
+  "Sync a conversation to AIVault. Uses sessionId for deduplication.",
   {
-    sessionId: z.string().describe("Unique session identifier for deduplication"),
-    platform: z.enum(["CHATGPT", "CLAUDE", "GEMINI", "CODEX", "CURSOR", "OPENCODE", "HERMES", "OTHER"]),
+    sessionId: z.string().describe("Unique session identifier for dedup"),
+    platform: z.string().describe("Platform (CHATGPT, CLAUDE, CODEX, CURSOR, etc.)"),
     title: z.string().optional().describe("Conversation title"),
     messages: z.array(z.object({
       role: z.enum(["user", "assistant"]),
       content: z.string(),
       timestamp: z.string().optional(),
-    })).min(1),
+    })).min(1).describe("Conversation messages"),
     createdAt: z.string().optional().describe("ISO-8601 conversation start time"),
     model: z.string().optional().describe("Model used"),
   },
   async ({ sessionId, platform, title, messages, createdAt, model }) => {
     try {
-      const uid = await getUserId();
-
-      // Check for existing conversation
-      const { data: existing } = await supabase
-        .from("conversations")
-        .select("id, message_count")
-        .eq("user_id", uid)
-        .eq("summary", `session:${sessionId}`)
-        .limit(1)
-        .single();
-
-      if (existing) {
-        // Update: replace messages
-        await supabase.from("messages").delete().eq("conversation_id", existing.id);
-        await supabase
-          .from("conversations")
-          .update({ message_count: messages.length, title: title || undefined })
-          .eq("id", existing.id);
-
-        await insertMessages(existing.id, messages);
-
-        return {
-          content: [{
-            type: "text" as const,
-            text: JSON.stringify({ action: "updated", conversationId: existing.id, messageCount: messages.length }),
-          }],
-        };
-      }
-
-      // Create new
-      const { data: conv, error } = await supabase
-        .from("conversations")
-        .insert({
-          user_id: uid,
-          platform,
-          title: title || `${platform} Session ${sessionId.slice(0, 8)}`,
-          summary: `session:${sessionId}`,
-          message_count: messages.length,
-          created_at: createdAt || new Date().toISOString(),
-          imported_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-
-      if (error) throw error;
-
-      await insertMessages(conv.id, messages);
-
-      // Auto-embed (async, fire and forget)
-      supabase.from("messages").select("id").eq("conversation_id", conv.id).limit(1);
-
+      const data = await apiPost<unknown>("/api/collector/sync", {
+        sessionId,
+        platform,
+        title,
+        messages,
+        createdAt,
+        model,
+      });
       return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({ action: "created", conversationId: conv.id, messageCount: messages.length }),
-        }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
 );
 
 server.tool(
@@ -354,86 +227,34 @@ server.tool(
   },
   async ({ agentId }) => {
     try {
-      const { data, error } = await supabase
-        .from("collector_agents")
-        .update({ last_seen: new Date().toISOString(), status: "online" })
-        .eq("agent_id", agentId)
-        .select()
-        .single();
-
-      if (error) throw error;
-
+      const data = await apiPatch<unknown>("/api/collector/agents", {
+        action: "heartbeat",
+        agentId,
+      });
       return {
-        content: [{
-          type: "text" as const,
-          text: JSON.stringify({ ok: true, lastSeen: data?.last_seen }),
-        }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
 );
 
 server.tool(
   "list_agents",
-  "List all registered collector agents and their status",
+  "List all registered collector agents and their online/offline status",
   {},
   async () => {
     try {
-      const uid = await getUserId();
-      const { data, error } = await supabase
-        .from("collector_agents")
-        .select("*")
-        .eq("user_id", uid)
-        .order("last_seen", { ascending: false });
-
-      if (error) {
-        if (error.message.includes("does not exist")) {
-          return {
-            content: [{
-              type: "text" as const,
-              text: JSON.stringify({ agents: [], note: "collector_agents table not found. Run migration first." }),
-            }],
-          };
-        }
-        throw error;
-      }
-
-      // Mark stale agents (no heartbeat in 5 minutes)
-      const now = Date.now();
-      const agents = (data || []).map((a) => ({
-        ...a,
-        status: now - new Date(a.last_seen).getTime() > 5 * 60 * 1000 ? "offline" : a.status,
-      }));
-
+      const data = await apiGet<unknown>("/api/collector/agents");
       return {
-        content: [{ type: "text" as const, text: JSON.stringify({ agents }, null, 2) }],
+        content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
       };
     } catch (e) {
       return { content: [{ type: "text" as const, text: `Error: ${errorMsg(e)}` }], isError: true };
     }
-  }
+  },
 );
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-async function insertMessages(
-  conversationId: string,
-  messages: Array<{ role: string; content: string; timestamp?: string }>,
-) {
-  for (let i = 0; i < messages.length; i += 50) {
-    const batch = messages.slice(i, i + 50);
-    const rows = batch.map((msg) => ({
-      conversation_id: conversationId,
-      role: msg.role,
-      content: msg.content,
-      created_at: msg.timestamp || new Date().toISOString(),
-    }));
-    const { error } = await supabase.from("messages").insert(rows);
-    if (error) throw new Error(`Failed to insert messages: ${error.message}`);
-  }
-}
 
 // ─── Start ───────────────────────────────────────────────────────────────────
 
