@@ -7,11 +7,31 @@
   "bin": {
     "aivault-mcp": "dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": "./dist/index.js"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aivault-org/aivault-mcp-server.git"
+  },
+  "homepage": "https://github.com/aivault-org/aivault-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/aivault-org/aivault-mcp-server/issues"
   },
   "keywords": ["mcp", "aivault", "ai", "conversation", "knowledge-base", "rag", "agent"],
   "license": "MIT",
