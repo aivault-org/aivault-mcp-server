@@ -1,0 +1,29 @@
+{
+  "name": "aivault-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP Server for AIVault — AI conversation data sovereignty platform. Provides tools for searching, syncing, and managing AI conversations across all platforms.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "aivault-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "keywords": ["mcp", "aivault", "ai", "conversation", "knowledge-base", "rag"],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@supabase/supabase-js": "^2.50.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.8"
+  }
+}
