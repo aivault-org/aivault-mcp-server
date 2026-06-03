@@ -67,7 +67,7 @@ function errorMsg(e: unknown): string {
 
 const server = new McpServer({
   name: "aivault",
-  version: "2.0.0",
+  version: "0.1.0",
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
