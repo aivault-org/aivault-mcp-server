@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 import { hostname, platform as osPlatform } from "node:os";
+import { execSync } from "node:child_process";
 
 // ─── Environment ─────────────────────────────────────────────────────────────
 
@@ -19,6 +20,46 @@ if (!AIVAULT_API_KEY) {
   process.exit(1);
 }
 
+// ─── Auto-detect agent type ──────────────────────────────────────────────────
+
+function detectPlatform(): string {
+  // Check known agent env vars
+  if (process.env.CODEX_CI || process.env.CODEX_SHELL || process.env.CODEX_THREAD_ID) return "CODEX";
+  if (process.env.CLAUDE_CODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "CLAUDE";
+  if (process.env.CURSOR_TRACE_ID || process.env.CURSOR_SESSION) return "CURSOR";
+  if (process.env.OPENCODE) return "OPENCODE";
+  if (process.env.HERMES) return "HERMES";
+
+  // Check parent process bundle id (macOS)
+  const bundleId = process.env.__CFBundleIdentifier || "";
+  if (bundleId.includes("codex")) return "CODEX";
+  if (bundleId.includes("claude")) return "CLAUDE";
+  if (bundleId.includes("cursor")) return "CURSOR";
+
+  return "MCP";
+}
+
+function detectAgentName(): string {
+  // Try macOS computer name first (most user-friendly)
+  if (osPlatform() === "darwin") {
+    try {
+      const name = execSync("scutil --get ComputerName", { encoding: "utf8", timeout: 2000 }).trim();
+      if (name && name !== "localhost") return name;
+    } catch { /* ignore */ }
+  }
+
+  // Fallback to hostname
+  const h = hostname();
+  // "bogon" is macOS default when DNS is unconfigured — not useful
+  if (h === "bogon" || h === "localhost") {
+    return `${osPlatform()} device`;
+  }
+  return h;
+}
+
+const agentPlatform = process.env.AIVAULT_AGENT_PLATFORM || detectPlatform();
+const agentName = process.env.AIVAULT_AGENT_NAME || detectAgentName();
+
 // ─── Proxy & Fetch ───────────────────────────────────────────────────────────
 
 const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
@@ -26,7 +67,6 @@ const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
 
 const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
 
-// Use undici fetch with proxy dispatcher when available, otherwise global fetch
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const doFetch: (url: string, opts?: any) => Promise<any> = proxyAgent
   ? (url, opts) => undiciFetch(url, { ...opts, dispatcher: proxyAgent })
@@ -84,11 +124,9 @@ let currentAgentId: string | null = null;
 
 async function autoRegister(): Promise<void> {
   try {
-    const agentName = process.env.AIVAULT_AGENT_NAME || `${hostname()} (${osPlatform()})`;
-    const agentPlatform = process.env.AIVAULT_AGENT_PLATFORM || "MCP";
-
-    // Stable ID based on hostname + platform, so restarts update instead of duplicate
-    const stableId = `agent_${hostname()}_${osPlatform()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+    // Stable ID: user can override, otherwise derive from hostname + platform
+    const stableId = process.env.AIVAULT_AGENT_ID
+      || `agent_${hostname()}_${agentPlatform}`.replace(/[^a-zA-Z0-9_-]/g, "_");
 
     const data = await apiPost<Record<string, unknown>>("/api/collector/agents", {
       action: "register",
@@ -97,9 +135,10 @@ async function autoRegister(): Promise<void> {
       platform: agentPlatform,
       metadata: {
         hostname: hostname(),
+        displayName: agentName,
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.3",
+        mcpVersion: "0.1.4",
       },
     });
 
@@ -121,7 +160,7 @@ async function autoRegister(): Promise<void> {
 
 const server = new McpServer({
   name: "aivault",
-  version: "0.1.3",
+  version: "0.1.4",
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
