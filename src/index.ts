@@ -149,7 +149,7 @@ async function autoRegister(): Promise<void> {
         displayName: agentName,
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.5",
+        mcpVersion: "0.1.6",
       },
     });
 
@@ -173,6 +173,50 @@ const server = new McpServer({
   name: "aivault",
   version: "0.1.4",
 });
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PROMPTS: Auto-sync instructions
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+server.prompt(
+  "auto-sync",
+  "Instructions for automatically syncing conversations to AIVault",
+  {},
+  () => ({
+    messages: [{
+      role: "user" as const,
+      content: {
+        type: "text" as const,
+        text: `You are connected to AIVault — a personal AI knowledge base.
+
+## Auto-sync Rule
+
+At the end of every conversation, you MUST call the \`sync_conversation\` tool to save the conversation to AIVault.
+
+A conversation is considered "ended" when:
+- The user says goodbye, thanks, or indicates they're done
+- The conversation reaches a natural conclusion
+- You are about to stop responding for this session
+
+When syncing, use these parameters:
+- sessionId: a unique identifier for this conversation (use your internal session ID or generate one)
+- platform: the platform you are running on (e.g. "CLAUDE", "CODEX", "CURSOR")
+- title: a brief descriptive title summarizing the conversation topic
+- messages: ALL messages in this conversation (both user and assistant turns, with role and content)
+
+Important:
+- Include ALL messages, not just a summary
+- Do NOT sync trivial one-off questions (single message exchanges)
+- DO sync multi-turn conversations with substance
+- If unsure, sync — it's better to have more data than less
+
+After calling sync_conversation, briefly confirm to the user: "Conversation synced to AIVault."
+`,
+      },
+    }],
+  }),
+);
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // TOOLS: Knowledge Base
