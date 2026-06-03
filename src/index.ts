@@ -149,7 +149,7 @@ async function autoRegister(): Promise<void> {
         displayName: agentName,
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.6",
+        mcpVersion: "0.1.7",
       },
     });
 
@@ -216,6 +216,66 @@ After calling sync_conversation, briefly confirm to the user: "Conversation sync
       },
     }],
   }),
+);
+
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// RESOURCES: Knowledge base access
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+// Resource template: individual conversation
+server.resource(
+  "conversation",
+  "aivault://conversations/{id}",
+  { description: "Get a specific conversation by ID from your AIVault knowledge base", mimeType: "application/json" },
+  async (uri, variables) => {
+    try {
+      const id = (variables as unknown as Record<string, string>)?.id || uri.href.split("/").pop();
+      if (!id) {
+        return { contents: [{ uri: uri.href, text: "Missing conversation ID" }] };
+      }
+      const data = await apiGet<unknown>(`/api/conversations/${id}`);
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+      };
+    } catch (e) {
+      return { contents: [{ uri: uri.href, text: `Error: ${errorMsg(e)}` }] };
+    }
+  },
+);
+
+// Static resource: recent conversations
+server.resource(
+  "recent-conversations",
+  "aivault://conversations",
+  { description: "List recent conversations from your AIVault knowledge base", mimeType: "application/json" },
+  async (uri) => {
+    try {
+      const data = await apiGet<unknown>("/api/conversations?limit=20");
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+      };
+    } catch (e) {
+      return { contents: [{ uri: uri.href, text: `Error: ${errorMsg(e)}` }] };
+    }
+  },
+);
+
+// Static resource: stats
+server.resource(
+  "aivault-stats",
+  "aivault://stats",
+  { description: "Get AIVault statistics: conversation count, messages, platforms", mimeType: "application/json" },
+  async (uri) => {
+    try {
+      const data = await apiGet<unknown>("/api/stats");
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: JSON.stringify(data, null, 2) }],
+      };
+    } catch (e) {
+      return { contents: [{ uri: uri.href, text: `Error: ${errorMsg(e)}` }] };
+    }
+  },
 );
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
