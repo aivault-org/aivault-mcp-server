@@ -87,15 +87,19 @@ async function autoRegister(): Promise<void> {
     const agentName = process.env.AIVAULT_AGENT_NAME || `${hostname()} (${osPlatform()})`;
     const agentPlatform = process.env.AIVAULT_AGENT_PLATFORM || "MCP";
 
+    // Stable ID based on hostname + platform, so restarts update instead of duplicate
+    const stableId = `agent_${hostname()}_${osPlatform()}`.replace(/[^a-zA-Z0-9_-]/g, "_");
+
     const data = await apiPost<Record<string, unknown>>("/api/collector/agents", {
       action: "register",
+      agentId: stableId,
       name: agentName,
       platform: agentPlatform,
       metadata: {
         hostname: hostname(),
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.2",
+        mcpVersion: "0.1.3",
       },
     });
 
@@ -117,7 +121,7 @@ async function autoRegister(): Promise<void> {
 
 const server = new McpServer({
   name: "aivault",
-  version: "0.1.2",
+  version: "0.1.3",
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
