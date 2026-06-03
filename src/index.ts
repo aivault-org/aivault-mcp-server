@@ -150,7 +150,7 @@ async function autoRegister(): Promise<void> {
         displayName: agentName,
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.2.0",
+        mcpVersion: "0.2.1",
       },
     });
 
@@ -469,29 +469,23 @@ server.tool(
 
 await autoRegister();
 
-// ─── Start built-in collector (Claude Code session files) ────────────────────
-
-let collectorStop: (() => void) | undefined;
-
-if (agentPlatform === "CLAUDE") {
-  try {
-    const collector = await startCollector(async (session) => {
-      await apiPost("/api/collector/sync", {
-        sessionId: session.sessionId,
-        platform: "CLAUDE",
-        title: session.title,
-        messages: session.messages,
-        createdAt: session.createdAt,
-        model: session.model,
-      });
-    });
-    collectorStop = collector.stop;
-  } catch {
-    // Non-fatal
-  }
-}
-
-// ─── Start MCP transport ─────────────────────────────────────────────────────
+// ─── Start MCP transport FIRST (don't block on collector) ────────────────────
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// ─── Start built-in collector in background (Claude Code session files) ──────
+
+if (agentPlatform === "CLAUDE") {
+  // Fire and forget — don't await, so MCP transport stays responsive
+  startCollector(async (session) => {
+    await apiPost("/api/collector/sync", {
+      sessionId: session.sessionId,
+      platform: "CLAUDE",
+      title: session.title,
+      messages: session.messages,
+      createdAt: session.createdAt,
+      model: session.model,
+    });
+  }).catch(() => {});
+}
