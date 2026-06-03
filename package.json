@@ -1,6 +1,6 @@
 {
   "name": "@aivault/aivault-mcp-server",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP Server for AIVault — search, sync, and manage your AI conversations from any agent. Connects to your AIVault instance via HTTP API.",
   "type": "module",
   "main": "dist/index.js",
@@ -33,10 +33,19 @@
   "bugs": {
     "url": "https://github.com/aivault-org/aivault-mcp-server/issues"
   },
-  "keywords": ["mcp", "aivault", "ai", "conversation", "knowledge-base", "rag", "agent"],
+  "keywords": [
+    "mcp",
+    "aivault",
+    "ai",
+    "conversation",
+    "knowledge-base",
+    "rag",
+    "agent"
+  ],
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.1",
+    "undici": "^8.3.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

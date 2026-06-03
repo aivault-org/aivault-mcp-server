@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 import { hostname, platform as osPlatform } from "node:os";
 
@@ -18,15 +19,28 @@ if (!AIVAULT_API_KEY) {
   process.exit(1);
 }
 
+// ─── Proxy & Fetch ───────────────────────────────────────────────────────────
+
+const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY
+  || process.env.https_proxy || process.env.http_proxy;
+
+const proxyAgent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined;
+
+// Use undici fetch with proxy dispatcher when available, otherwise global fetch
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const doFetch: (url: string, opts?: any) => Promise<any> = proxyAgent
+  ? (url, opts) => undiciFetch(url, { ...opts, dispatcher: proxyAgent })
+  : fetch;
+
 // ─── HTTP Client ─────────────────────────────────────────────────────────────
 
-const headers = {
+const reqHeaders: Record<string, string> = {
   "Content-Type": "application/json",
   Authorization: `Bearer ${AIVAULT_API_KEY}`,
 };
 
 async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(`${AIVAULT_URL}${path}`, { headers });
+  const res = await doFetch(`${AIVAULT_URL}${path}`, { method: "GET", headers: reqHeaders });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`AIVault API ${res.status}: ${body}`);
@@ -35,9 +49,9 @@ async function apiGet<T>(path: string): Promise<T> {
 }
 
 async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${AIVAULT_URL}${path}`, {
+  const res = await doFetch(`${AIVAULT_URL}${path}`, {
     method: "POST",
-    headers,
+    headers: reqHeaders,
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -48,9 +62,9 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
 }
 
 async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${AIVAULT_URL}${path}`, {
+  const res = await doFetch(`${AIVAULT_URL}${path}`, {
     method: "PATCH",
-    headers,
+    headers: reqHeaders,
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -81,13 +95,12 @@ async function autoRegister(): Promise<void> {
         hostname: hostname(),
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.0",
+        mcpVersion: "0.1.2",
       },
     });
 
     currentAgentId = (data.agent_id as string) || (data.id as string) || null;
     if (currentAgentId) {
-      // Start heartbeat every 60s
       setInterval(() => {
         apiPatch("/api/collector/agents", {
           action: "heartbeat",
@@ -96,7 +109,6 @@ async function autoRegister(): Promise<void> {
       }, 60_000);
     }
   } catch (e) {
-    // Non-fatal: server still works, just won't appear in dashboard
     console.error("[aivault] auto-register failed:", errorMsg(e));
   }
 }
@@ -105,7 +117,7 @@ async function autoRegister(): Promise<void> {
 
 const server = new McpServer({
   name: "aivault",
-  version: "0.1.1",
+  version: "0.1.2",
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
