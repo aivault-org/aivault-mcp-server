@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { ProxyAgent, fetch as undiciFetch } from "undici";
 import { z } from "zod";
 import { hostname, platform as osPlatform } from "node:os";
+import { startCollector } from "./collector.js";
 import { execSync } from "node:child_process";
 
 // ─── Environment ─────────────────────────────────────────────────────────────
@@ -149,7 +150,7 @@ async function autoRegister(): Promise<void> {
         displayName: agentName,
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.7",
+        mcpVersion: "0.2.0",
       },
     });
 
@@ -467,6 +468,30 @@ server.tool(
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 await autoRegister();
+
+// ─── Start built-in collector (Claude Code session files) ────────────────────
+
+let collectorStop: (() => void) | undefined;
+
+if (agentPlatform === "CLAUDE") {
+  try {
+    const collector = await startCollector(async (session) => {
+      await apiPost("/api/collector/sync", {
+        sessionId: session.sessionId,
+        platform: "CLAUDE",
+        title: session.title,
+        messages: session.messages,
+        createdAt: session.createdAt,
+        model: session.model,
+      });
+    });
+    collectorStop = collector.stop;
+  } catch {
+    // Non-fatal
+  }
+}
+
+// ─── Start MCP transport ─────────────────────────────────────────────────────
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
