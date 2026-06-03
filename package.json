@@ -1,6 +1,6 @@
 {
   "name": "@aivault/aivault-mcp-server",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "MCP Server for AIVault — search, sync, and manage your AI conversations from any agent. Connects to your AIVault instance via HTTP API.",
   "type": "module",
   "main": "dist/index.js",

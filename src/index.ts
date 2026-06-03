@@ -23,18 +23,29 @@ if (!AIVAULT_API_KEY) {
 // ─── Auto-detect agent type ──────────────────────────────────────────────────
 
 function detectPlatform(): string {
-  // Check known agent env vars
+  // 1. Check known agent env vars
   if (process.env.CODEX_CI || process.env.CODEX_SHELL || process.env.CODEX_THREAD_ID) return "CODEX";
   if (process.env.CLAUDE_CODE || process.env.CLAUDE_CODE_ENTRYPOINT) return "CLAUDE";
   if (process.env.CURSOR_TRACE_ID || process.env.CURSOR_SESSION) return "CURSOR";
   if (process.env.OPENCODE) return "OPENCODE";
   if (process.env.HERMES) return "HERMES";
 
-  // Check parent process bundle id (macOS)
+  // 2. Check macOS bundle identifier
   const bundleId = process.env.__CFBundleIdentifier || "";
   if (bundleId.includes("codex")) return "CODEX";
   if (bundleId.includes("claude")) return "CLAUDE";
   if (bundleId.includes("cursor")) return "CURSOR";
+
+  // 3. Check parent process name (works for CLI agents)
+  try {
+    const ppid = process.ppid;
+    if (ppid) {
+      const cmd = execSync(`ps -p ${ppid} -o comm=`, { encoding: "utf8", timeout: 1000 }).trim().toLowerCase();
+      if (cmd.includes("claude")) return "CLAUDE";
+      if (cmd.includes("codex")) return "CODEX";
+      if (cmd.includes("cursor")) return "CURSOR";
+    }
+  } catch { /* ignore */ }
 
   return "MCP";
 }
@@ -138,7 +149,7 @@ async function autoRegister(): Promise<void> {
         displayName: agentName,
         os: osPlatform(),
         nodeVersion: process.version,
-        mcpVersion: "0.1.4",
+        mcpVersion: "0.1.5",
       },
     });
 
