@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { hostname, platform as osPlatform } from "node:os";
 
 // ─── Environment ─────────────────────────────────────────────────────────────
 
@@ -63,11 +64,48 @@ function errorMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+// ─── Auto-register on startup ────────────────────────────────────────────────
+
+let currentAgentId: string | null = null;
+
+async function autoRegister(): Promise<void> {
+  try {
+    const agentName = process.env.AIVAULT_AGENT_NAME || `${hostname()} (${osPlatform()})`;
+    const agentPlatform = process.env.AIVAULT_AGENT_PLATFORM || "MCP";
+
+    const data = await apiPost<Record<string, unknown>>("/api/collector/agents", {
+      action: "register",
+      name: agentName,
+      platform: agentPlatform,
+      metadata: {
+        hostname: hostname(),
+        os: osPlatform(),
+        nodeVersion: process.version,
+        mcpVersion: "0.1.0",
+      },
+    });
+
+    currentAgentId = (data.agent_id as string) || (data.id as string) || null;
+    if (currentAgentId) {
+      // Start heartbeat every 60s
+      setInterval(() => {
+        apiPatch("/api/collector/agents", {
+          action: "heartbeat",
+          agentId: currentAgentId,
+        }).catch(() => {});
+      }, 60_000);
+    }
+  } catch (e) {
+    // Non-fatal: server still works, just won't appear in dashboard
+    console.error("[aivault] auto-register failed:", errorMsg(e));
+  }
+}
+
 // ─── Server ──────────────────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: "aivault",
-  version: "0.1.0",
+  version: "0.1.1",
 });
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -257,6 +295,8 @@ server.tool(
 );
 
 // ─── Start ───────────────────────────────────────────────────────────────────
+
+await autoRegister();
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
